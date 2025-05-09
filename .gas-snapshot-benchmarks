@@ -1,2 +1,6 @@
-WebAuthnGasBenchmarks:test_verify_early_return_challenge() (gas: 46031)
-WebAuthnGasBenchmarks:test_verify_full_path() (gas: 256026)
+WebAuthnForkTest:test_verify_early_return_challenge_arb() (gas: 51616)
+WebAuthnForkTest:test_verify_early_return_challenge_base() (gas: 51617)
+WebAuthnForkTest:test_verify_early_return_challenge_eth() (gas: 51573)
+WebAuthnForkTest:test_verify_full_path_arb() (gas: 262182)
+WebAuthnForkTest:test_verify_full_path_base() (gas: 262167)
+WebAuthnForkTest:test_verify_full_path_eth() (gas: 262139)

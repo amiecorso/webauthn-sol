@@ -161,8 +161,12 @@ library WebAuthn {
         // so an invalid signature will be checked twice: once by the precompile and once by FCL.
         // Ideally this signature failure is simulated offchain and no one actually pay this gas.
         bool valid = ret.length > 0;
-        if (success && valid) return abi.decode(ret, (uint256)) == 1;
+        if (success && valid) {
+            console2.log("USING_PRECOMPILE");
+            return abi.decode(ret, (uint256)) == 1;
+        }
 
+        console2.log("USING_FCL");
         return FCL_ecdsa.ecdsa_verify(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
     }
 }
