@@ -1,0 +1,2 @@
+WebAuthnGasBenchmarks:test_verify_early_return_challenge() (gas: 46031)
+WebAuthnGasBenchmarks:test_verify_full_path() (gas: 256026)
