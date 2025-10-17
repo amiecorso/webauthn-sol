@@ -150,18 +150,27 @@ library WebAuthn {
         // 20. Using credentialPublicKey, verify that sig is a valid signature over the binary concatenation of authData
         // and hash.
         bytes32 messageHash = sha256(abi.encodePacked(webAuthnAuth.authenticatorData, clientDataJSONHash));
-        bytes memory args = abi.encode(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
-        // try the RIP-7212 precompile address
-        (bool precompileSuccess, bytes memory precompileRet) = _VERIFIER.staticcall(args);
+        bool sigValid = _verifySigP256(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
+        return logicalChecksPassed && sigValid;
+    }
+
+    /// @dev Verifies a P256 signature using the precompiled contract or FCL.
+    /// @param messageHash The hash of the message to verify.
+    /// @param r The r value of the signature.
+    /// @param s The s value of the signature.
+    /// @param x The x coordinate of the public key.
+    /// @param y The y coordinate of the public key.
+    /// @return True if the signature is valid, false otherwise.
+    function _verifySigP256(bytes32 messageHash, uint256 r, uint256 s, uint256 x, uint256 y) private view returns (bool) {
         // staticcall will not revert if address has no code
         // check return length
         // note that even if precompile exists, ret.length is 0 when verification returns false
         // so an invalid signature will be checked twice: once by the precompile and once by FCL.
         // Ideally this signature failure is simulated offchain and no one actually pay this gas.
-        bool valid = precompileRet.length > 0;
-        bool sigValid = precompileSuccess && valid
-            ? abi.decode(precompileRet, (uint256)) == 1
-            : FCL_ecdsa.ecdsa_verify(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
-        return logicalChecksPassed && sigValid;
+        (bool success, bytes memory ret) = _VERIFIER.staticcall(abi.encode(messageHash, r, s, x, y));
+        if (success && ret.length > 0) {
+            return abi.decode(ret, (uint256)) == 1;
+        }
+        return FCL_ecdsa.ecdsa_verify(messageHash, r, s, x, y);
     }
 }
