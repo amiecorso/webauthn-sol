@@ -11,9 +11,12 @@ contract WebAuthnForkTest is BaseWebAuthnTest {
     uint256 private arbFork;
 
     function setUp() public override {
-        baseFork = vm.createFork("https://mainnet.base.org");
-        ethFork = vm.createFork("https://ethereum-rpc.publicnode.com");
-        arbFork = vm.createFork("https://arb1.arbitrum.io/rpc");
+        string memory baseRpc = vm.envString("BASE_RPC");
+        string memory ethRpc = vm.envString("ETHEREUM_RPC");
+        string memory arbRpc = vm.envString("ARBITRUM_RPC");
+        baseFork = vm.createFork(baseRpc);
+        ethFork = vm.createFork(ethRpc);
+        arbFork = vm.createFork(arbRpc);
 
         super.setUp();
     }

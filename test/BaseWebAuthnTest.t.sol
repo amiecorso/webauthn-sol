@@ -28,31 +28,16 @@ abstract contract BaseWebAuthnTest is Test {
 
     function setUp() public virtual {
         defaultChallenge = abi.encode(0xf631058a3ba1116acce12396fad0a125b5041c43f8e15723709f81aa8d5f4ccf);
-        validAuth = buildValidAuth(defaultChallenge);
-        wrongChallengeAuth = buildWrongChallengeAuth(abi.encode(0xdeadbeef));
+        validAuth = buildWebAuthnAuth(defaultChallenge);
+        wrongChallengeAuth = buildWebAuthnAuth(abi.encode(0xdeadbeef));
     }
 
-    function buildValidAuth(bytes memory challenge) internal pure returns (WebAuthn.WebAuthnAuth memory auth) {
+    function buildWebAuthnAuth(bytes memory challenge) internal pure returns (WebAuthn.WebAuthnAuth memory auth) {
         auth = WebAuthn.WebAuthnAuth({
             authenticatorData: AUTH_DATA,
             clientDataJSON: string.concat(
                 '{"type":"webauthn.get","challenge":"',
                 Base64Url.encode(challenge),
-                '","origin":"http://localhost:3005","crossOrigin":false}'
-            ),
-            challengeIndex: CHALLENGE_INDEX,
-            typeIndex: TYPE_INDEX,
-            r: SIG_R,
-            s: SIG_S
-        });
-    }
-
-    function buildWrongChallengeAuth(bytes memory wrongChallenge) internal pure returns (WebAuthn.WebAuthnAuth memory auth) {
-        auth = WebAuthn.WebAuthnAuth({
-            authenticatorData: AUTH_DATA,
-            clientDataJSON: string.concat(
-                '{"type":"webauthn.get","challenge":"',
-                Base64Url.encode(wrongChallenge),
                 '","origin":"http://localhost:3005","crossOrigin":false}'
             ),
             challengeIndex: CHALLENGE_INDEX,

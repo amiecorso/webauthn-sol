@@ -165,7 +165,7 @@ library WebAuthn {
         // check return length
         // note that even if precompile exists, ret.length is 0 when verification returns false
         // so an invalid signature will be checked twice: once by the precompile and once by FCL.
-        // Ideally this signature failure is simulated offchain and no one actually pay this gas.
+        // Ideally this signature failure is simulated offchain and no one actually pays this gas.
         (bool success, bytes memory ret) = _VERIFIER.staticcall(abi.encode(messageHash, r, s, x, y));
         if (success && ret.length > 0) {
             return abi.decode(ret, (uint256)) == 1;
