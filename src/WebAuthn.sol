@@ -107,17 +107,17 @@ library WebAuthn {
         view
         returns (bool)
     {
-        bool logicalChecksPassed = true;
+        bool hasFailedChecks = false;
         if (webAuthnAuth.s > _P256_N_DIV_2) {
             // guard against signature malleability
-            logicalChecksPassed = false;
+            hasFailedChecks = true;
         }
 
         // 11. Verify that the value of C.type is the string webauthn.get.
         // bytes("type":"webauthn.get").length = 21
         string memory _type = webAuthnAuth.clientDataJSON.slice(webAuthnAuth.typeIndex, webAuthnAuth.typeIndex + 21);
         if (keccak256(bytes(_type)) != _EXPECTED_TYPE_HASH) {
-            logicalChecksPassed = false;
+            hasFailedChecks = true;
         }
 
         // 12. Verify that the value of C.challenge equals the base64url encoding of options.challenge.
@@ -125,20 +125,20 @@ library WebAuthn {
         string memory actualChallenge =
             webAuthnAuth.clientDataJSON.slice(webAuthnAuth.challengeIndex, webAuthnAuth.challengeIndex + expectedChallenge.length);
         if (keccak256(bytes(actualChallenge)) != keccak256(expectedChallenge)) {
-            logicalChecksPassed = false;
+            hasFailedChecks = true;
         }
 
         // Skip 13., 14., 15.
 
         // 16. Verify that the UP bit of the flags in authData is set.
         if (webAuthnAuth.authenticatorData[32] & _AUTH_DATA_FLAGS_UP != _AUTH_DATA_FLAGS_UP) {
-            logicalChecksPassed = false;
+            hasFailedChecks = true;
         }
 
         // 17. If user verification is required for this assertion, verify that the User Verified bit of the flags in
         // authData is set.
         if (requireUV && (webAuthnAuth.authenticatorData[32] & _AUTH_DATA_FLAGS_UV) != _AUTH_DATA_FLAGS_UV) {
-            logicalChecksPassed = false;
+            hasFailedChecks = true;
         }
 
         // skip 18.
@@ -150,7 +150,7 @@ library WebAuthn {
         // and hash.
         bytes32 messageHash = sha256(abi.encodePacked(webAuthnAuth.authenticatorData, clientDataJSONHash));
         bool sigValid = _verifySigP256(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
-        return logicalChecksPassed && sigValid;
+        return !hasFailedChecks && sigValid;
     }
 
     /// @dev Verifies a P256 signature using the precompiled contract or FCL.
