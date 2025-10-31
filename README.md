@@ -80,6 +80,31 @@ What’s included here:
   - `scripts/profile_fcl_gas.sh`: loops all vectors, writes `test/fixtures/fcl_gas_profile.csv`, and reports the max‑gas row.
   - `scripts/plot_fcl_gas_html.py`: builds `test/fixtures/fcl_gas_hist.html`, an interactive histogram with a “Download PNG” button.
 
+### Generating P‑256 vectors (Python)
+We commit the vector inputs under `test/fixtures`, but you can reproduce or regenerate them locally.
+
+Prereqs:
+- Python 3.10+ (macOS: `python3 --version`)
+
+Set up a virtual environment and install deps:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r test/helpers/requirements.txt
+```
+
+Generate vectors (defaults to `test/fixtures/fcl_vectors.json`):
+```bash
+python3 test/helpers/generate_p256_vectors.py \
+  --count 300 \
+  --seed 42 \
+  --out test/fixtures/fcl_vectors.json
+```
+
+Notes:
+- `--seed` is optional; provide it for reproducible output.
+- The script will create the output directory if it does not exist.
+
 How to reproduce our profiling:
 ```bash
 bash scripts/profile_fcl_gas.sh
