@@ -36,6 +36,28 @@ library WebAuthn {
         uint256 s;
     }
 
+    /// @dev A container for a fixed valid P-256 signature vector used for simulation-only bytecode overrides.
+    ///      The intention is to disambiguate the execution path during gas estimation so that simulation
+    ///      traverses the same path (RIP-7212 precompile where available, software verifier otherwise)
+    ///      as successful onchain execution, regardless of the actual inputs provided by the caller.
+    struct P256FixedVector {
+        bytes32 messageHash;
+        uint256 r;
+        uint256 s;
+        uint256 x;
+        uint256 y;
+    }
+
+    /// @notice Returns the max-gas FCL vector discovered by profiling.
+    /// @dev Use this only for simulation-only overrides with verifySim.
+    function maxFCLVector() internal pure returns (P256FixedVector memory v) {
+        v.messageHash = 0xe6a07006b0657b5ec7eb6a5ca71fd1ef1e140c4875a02bf0dc57932216a5466c;
+        v.r = 98069551222553200380129153746529955640161102519415444333610560677728671875584;
+        v.s = 1585318222913875402506883363672909699238337439243988620707128455665644746359;
+        v.x = 82446410037314403600025965303123138909931722678582652465738223700811189285316;
+        v.y = 108370200102191575987015793914742537048794546856992506056017287390188641373816;
+    }
+
     /// @dev Bit 0 of the authenticator data struct, corresponding to the "User Present" bit.
     ///      See https://www.w3.org/TR/webauthn-2/#flags.
     bytes1 private constant _AUTH_DATA_FLAGS_UP = 0x01;
@@ -151,6 +173,67 @@ library WebAuthn {
         bytes32 messageHash = sha256(abi.encodePacked(webAuthnAuth.authenticatorData, clientDataJSONHash));
         bool sigValid = _verifySigP256(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
         return !hasFailedChecks && sigValid;
+    }
+
+    /// @notice Simulation-friendly variant of verify for bytecode overrides during gas estimation.
+    ///
+    /// This function intentionally ignores the provided (r, s, x, y) carried in webAuthnAuth/x/y
+    /// at the final signature check, and instead verifies against a known-valid, fixed vector.
+    /// This ensures that on RIP-7212 chains, simulation goes through the precompile success path
+    /// (and on non-7212 chains, through the software verifier success path) without depending on
+    /// the caller's inputs, which are necessarily invalid during bundler estimation.
+    ///
+    /// All non-signature checks and hashing are still performed to approximate the same gas profile
+    /// as the normal verify function, but their outcomes are not used to determine the final return value.
+    ///
+    /// IMPORTANT: Only use this in simulation-only bytecode overrides.
+    function verifySim(
+        bytes memory challenge,
+        bool requireUV,
+        WebAuthnAuth memory webAuthnAuth,
+        P256FixedVector memory fixedVector
+    ) internal view returns (bool) {
+        // Compute the same work as verify() to keep gas parity, but ignore outcomes.
+        if (webAuthnAuth.s > _P256_N_DIV_2) {
+            // no-op: do not early return; preserve computation parity
+        }
+
+        string memory _type = webAuthnAuth.clientDataJSON.slice(webAuthnAuth.typeIndex, webAuthnAuth.typeIndex + 21);
+        if (keccak256(bytes(_type)) != _EXPECTED_TYPE_HASH) {
+            // no-op
+        }
+
+        bytes memory expectedChallenge = bytes(string.concat('"challenge":"', Base64.encodeURL(challenge), '"'));
+        string memory actualChallenge =
+            webAuthnAuth.clientDataJSON.slice(webAuthnAuth.challengeIndex, webAuthnAuth.challengeIndex + expectedChallenge.length);
+        if (keccak256(bytes(actualChallenge)) != keccak256(expectedChallenge)) {
+            // no-op
+        }
+
+        if (webAuthnAuth.authenticatorData[32] & _AUTH_DATA_FLAGS_UP != _AUTH_DATA_FLAGS_UP) {
+            // no-op
+        }
+        if (requireUV && (webAuthnAuth.authenticatorData[32] & _AUTH_DATA_FLAGS_UV) != _AUTH_DATA_FLAGS_UV) {
+            // no-op
+        }
+
+        // Hashing steps to mirror the normal path's cost profile.
+        bytes32 clientDataJSONHash = sha256(bytes(webAuthnAuth.clientDataJSON));
+        bytes32 messageHash = sha256(abi.encodePacked(webAuthnAuth.authenticatorData, clientDataJSONHash));
+        // Prevent solidity optimizations from pruning the above by creating a meaningless dependency.
+        if (messageHash == bytes32(0)) {
+            // no-op branch that is expected to be false for realistic inputs
+        }
+
+        // Final signature verification uses the injected valid vector, not the caller inputs.
+        // This will succeed on both precompile-enabled and software paths, aligning simulation with onchain success.
+        return _verifySigP256(
+            fixedVector.messageHash,
+            fixedVector.r,
+            fixedVector.s,
+            fixedVector.x,
+            fixedVector.y
+        );
     }
 
     /// @dev Verifies a P256 signature using the precompiled contract or FCL.
