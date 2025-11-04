@@ -36,27 +36,13 @@ library WebAuthn {
         uint256 s;
     }
 
-    /// @dev A container for a fixed valid P-256 signature vector used for simulation-only bytecode overrides.
-    ///      The intention is to disambiguate the execution path during gas estimation so that simulation
-    ///      traverses the same path (RIP-7212 precompile where available, software verifier otherwise)
-    ///      as successful onchain execution, regardless of the actual inputs provided by the caller.
-    struct P256FixedVector {
-        bytes32 messageHash;
-        uint256 r;
-        uint256 s;
-        uint256 x;
-        uint256 y;
-    }
-
-    /// @notice Returns the max-gas FCL vector discovered by profiling.
-    /// @dev Use this only for simulation-only overrides with verifySim.
-    function maxFCLVector() internal pure returns (P256FixedVector memory v) {
-        v.messageHash = 0xf8a4282ab3eb7fc94549942d34ebf30621f650c768deaeea015e6d65e1a51c35;
-        v.r = 20139336683052888714038873167582501027195351158237573793487002384510848023887;
-        v.s = 56392021925764726173941405502281732455133177838319234707316517485837210435505;
-        v.x = 4298829178376772326374616666880385810003259955071224219171916003053314787520;
-        v.y = 31479344018232922129392468088330186945811777831702509748033956040849468386283;
-    }
+    // Fixed valid P-256 vector for simulation-only use inside verifySim.
+    // These values were selected as the highest-gas valid vector from our sweep.
+    bytes32 private constant _SIM_MSG = 0xf8a4282ab3eb7fc94549942d34ebf30621f650c768deaeea015e6d65e1a51c35;
+    uint256 private constant _SIM_R = 20139336683052888714038873167582501027195351158237573793487002384510848023887;
+    uint256 private constant _SIM_S = 56392021925764726173941405502281732455133177838319234707316517485837210435505;
+    uint256 private constant _SIM_X = 4298829178376772326374616666880385810003259955071224219171916003053314787520;
+    uint256 private constant _SIM_Y = 31479344018232922129392468088330186945811777831702509748033956040849468386283;
 
     /// @dev Bit 0 of the authenticator data struct, corresponding to the "User Present" bit.
     ///      See https://www.w3.org/TR/webauthn-2/#flags.
@@ -187,7 +173,14 @@ library WebAuthn {
     /// as the normal verify function, but their outcomes are not used to determine the final return value.
     ///
     /// IMPORTANT: Only use this in simulation-only bytecode overrides.
-    function verifySim(bytes memory challenge, bool requireUV, WebAuthnAuth memory webAuthnAuth, P256FixedVector memory fixedVector)
+    function verifySim(
+        bytes memory challenge,
+        bool requireUV,
+        WebAuthnAuth memory webAuthnAuth,
+        uint256,
+        /* x */
+        uint256 /* y */
+    )
         internal
         view
         returns (bool)
@@ -224,9 +217,9 @@ library WebAuthn {
             // no-op branch that is expected to be false for realistic inputs
         }
 
-        // Final signature verification uses the injected valid vector, not the caller inputs.
+        // Final signature verification uses the internal fixed vector, not the caller inputs.
         // This will succeed on both precompile-enabled and software paths, aligning simulation with onchain success.
-        return _verifySigP256(fixedVector.messageHash, fixedVector.r, fixedVector.s, fixedVector.x, fixedVector.y);
+        return _verifySigP256(_SIM_MSG, _SIM_R, _SIM_S, _SIM_X, _SIM_Y);
     }
 
     /// @dev Verifies a P256 signature using the precompiled contract or FCL.

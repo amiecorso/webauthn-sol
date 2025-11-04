@@ -73,12 +73,30 @@ Why we needed a statistical sweep: The FCL (software) verifier’s gas usage is 
 What’s included here:
 - `src/WebAuthn.sol`:
   - `verifySim(...)` for simulation‑only overrides.
-  - `maxFCLVector()` returning the highest‑gas valid P‑256 vector we profiled for the FCL path.
 - Tooling to generate, profile, and visualize FCL gas usage:
   - `test/helpers/generate_p256_vectors.py`: produces P‑256 WebAuthn assertion vectors.
   - `test/ProfileOne.t.sol`: profiles a single vector index, measuring gas and printing fields.
   - `scripts/profile_fcl_gas.sh`: loops all vectors, writes `test/fixtures/fcl_gas_profile.csv`, and reports the max‑gas row.
   - `scripts/plot_fcl_gas_html.py`: builds `test/fixtures/fcl_gas_hist.html`, an interactive histogram with a “Download PNG” button.
+
+### Why these vectors are representative of FCL gas variance
+
+**What FCL actually sees**
+- FCL only receives five values: `message` (32‑byte hash), `r`, `s`, `Qx`, `Qy`. WebAuthn fields upstream are only used to compute `message = sha256(authenticatorData || sha256(clientDataJSON))`.
+
+**Where the gas variance comes from**
+- The heavy work is a combined scalar multiplication whose control flow depends on the bit patterns of `u = message * s^-1 mod n` and `v = r * s^-1 mod n`. Different bit patterns lead to slightly different arithmetic paths and gas.
+
+**Why our sampling exercises that variance**
+- We vary the challenge and thus the hash of `clientDataJSON`, making the final `message` effectively random across samples.
+- ECDSA signing with low‑s normalization (as used in production) still yields `r,s` with the usual distribution; low‑s does not collapse the variability that FCL sees through `u`/`v`.
+- We also vary public keys. Even if a real wallet reused one key, the dominant driver of variance is the `u`/`v` bit patterns, not which valid key is used.
+
+**What doesn’t influence FCL gas**
+- RP ID hash, flags, counters, or JSON layout do not flow into FCL directly; they only affect the 32‑byte `message`. We’re not fixing the challenge in a way that would reduce `message` diversity.
+
+**Practical takeaway**
+- The histogram you see reflects the true variability driver inside FCL. Choosing the max‑gas valid vector from our sweep is a sound, conservative bound for non‑7212 chains and aligns simulations with worst‑case reality.
 
 ### Generating P‑256 vectors (Python)
 We commit the vector inputs under `test/fixtures`, but you can reproduce or regenerate them locally.
@@ -113,8 +131,8 @@ open test/fixtures/fcl_gas_hist.html
 ```
 
 How to use in bundler simulation (conceptual):
-- Deploy a “fake implementation” for the wallet where its call site uses `WebAuthn.verifySim(challenge, requireUV, auth, WebAuthn.maxFCLVector())` instead of `verify`.
-- In `eth_estimateUserOperationGas`, supply overrides that point the wallet’s ERC‑1967 implementation to the fake implementation during simulation only. Continue passing dummy signature calldata for shape parity; it will be ignored by `verifySim` at the final step.
+- Deploy a “fake implementation” for the wallet where its call site uses `WebAuthn.verifySim(challenge, requireUV, auth, x, y)` instead of `verify`.
+- In `eth_estimateUserOperationGas`, supply overrides that point the wallet’s ERC‑1967 implementation to the fake implementation during simulation only. Continue passing dummy signature calldata for shape parity; `verifySim` matches `verify`’s signature but ignores signature/public key at the final step and uses an internal fixed valid vector.
 
 Testing with/without RIP‑7212 locally:
 - Foundry doesn’t expose native precompiles. Tests that measure the FCL path etch a tiny stub at `address(0x100)` that returns empty data so the code cleanly falls back to FCL without reverting.
@@ -122,7 +140,6 @@ Testing with/without RIP‑7212 locally:
 Artifacts you may care about:
 - `test/fixtures/fcl_gas_profile.csv`: `index,gas,msgHash,r,s,x,y` for valid vectors.
 - `test/fixtures/fcl_gas_hist.html`: interactive histogram of gas counts.
-- `WebAuthn.maxFCLVector()`: the hardcoded worst‑case vector used for `verifySim`.
 
 Notes:
 - `verifySim` is for simulation‑only bytecode overrides; do not use in production deployments.
