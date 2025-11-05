@@ -63,6 +63,14 @@ library WebAuthn {
     bytes32 private constant _PROBE_QX = 0xa71af64de5126a4a4e02b7922d66ce9415ce88a4c9d25514d91082c8725ac957;
     bytes32 private constant _PROBE_QY = 0x5d47723c8fbe580bb369fec9c2665d8e30a435b9932645482e7c9f11e872296b;
 
+    /// @dev Solady-style canary address used to infer RIP-7212 presence when the precompile returns empty.
+    /// Chains may choose any address for the canary; tests can etch code at this address to simulate presence.
+    address private constant _SOLADY_CANARY = address(0x0000000000000000000000000000000000007212);
+
+    /// @dev Address of an on-chain P-256 verifier contract (Solady-style) for software fallback.
+    /// In tests, deploy a verifier to this address (or override via bytecode etching) if desired.
+    address private constant _SOLADY_VERIFIER = address(0x0000000000000000000000000000000000000026);
+
     ///
     /// @notice Verifies a Webauthn Authentication Assertion as described
     /// in https://www.w3.org/TR/webauthn-2/#sctn-verifying-assertion.
@@ -156,19 +164,23 @@ library WebAuthn {
         // 20. Using credentialPublicKey, verify that sig is a valid signature over the binary concatenation of authData
         // and hash.
         bytes32 messageHash = sha256(abi.encodePacked(webAuthnAuth.authenticatorData, clientDataJSONHash));
-        // Attempt RIP-7212 precompile; if ambiguous/false, probe with known-valid vector to
-        // detect precompile presence and avoid unnecessary software fallback when present.
-        if (_rip7212(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y)) {
-            return true;
+
+        // Solady approach: call precompile; if it returns data, decode. If empty, fall back to external verifier.
+        (uint256 retSize, uint256 word) = _rip7212Ret(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
+        if (retSize != 0) {
+            return word == 1;
         }
 
-        if (_rip7212(_PROBE_H, uint256(_PROBE_R), uint256(_PROBE_S), uint256(_PROBE_QX), uint256(_PROBE_QY))) {
-            // Precompile is present; original signature invalid.
-            return false;
+        // Precompile absent or ambiguous empty: fall back to a deployed verifier contract.
+        // Solady verifier expects calldata layout: h, r, s, Qx, Qy
+        bytes memory args = abi.encode(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
+        (bool vsucc, bytes memory vret) = _SOLADY_VERIFIER.staticcall(args);
+        if (vsucc && vret.length >= 32) {
+            return abi.decode(vret, (uint256)) == 1;
         }
 
-        // Precompile absent; fall back to OpenZeppelin's on-chain verifier.
-        return P256.verifySolidity(messageHash, bytes32(webAuthnAuth.r), bytes32(webAuthnAuth.s), bytes32(x), bytes32(y));
+        // If the external verifier is not deployed, treat as failure.
+        return false;
     }
 
     function verifySim(bytes memory challenge, bool requireUV, WebAuthnAuth memory webAuthnAuth, uint256 x, uint256 y)
@@ -217,19 +229,40 @@ library WebAuthn {
         // 20. Using credentialPublicKey, verify that sig is a valid signature over the binary concatenation of authData
         // and hash.
         bytes32 messageHash = sha256(abi.encodePacked(webAuthnAuth.authenticatorData, clientDataJSONHash));
-        // Attempt RIP-7212 precompile; if ambiguous/false, probe with known-valid vector to
-        // detect precompile presence and avoid unnecessary software fallback when present.
-        if (_rip7212(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y)) {
-            return true;
+
+        // Solady approach: call precompile; if it returns data, decode. If empty, fall back to external verifier.
+        (uint256 retSize, uint256 word) = _rip7212Ret(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
+        if (retSize != 0) {
+            return word == 1;
         }
 
-        if (_rip7212(_PROBE_H, uint256(_PROBE_R), uint256(_PROBE_S), uint256(_PROBE_QX), uint256(_PROBE_QY))) {
-            // Precompile is present; original signature invalid.
-            return false;
+        // Precompile absent or ambiguous empty: fall back to a deployed verifier contract.
+        // Solady verifier expects calldata layout: h, r, s, Qx, Qy
+        bytes memory args = abi.encode(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
+        (bool vsucc, bytes memory vret) = _SOLADY_VERIFIER.staticcall(args);
+        if (vsucc && vret.length >= 32) {
+            return abi.decode(vret, (uint256)) == 1;
         }
 
-        // Precompile absent; fall back to OpenZeppelin's on-chain verifier.
-        return P256.verifySolidity(messageHash, bytes32(webAuthnAuth.r), bytes32(webAuthnAuth.s), bytes32(x), bytes32(y));
+        // If the external verifier is not deployed, treat as failure.
+        return false;
+    }
+
+    /// @dev Low-level RIP-7212 call that reports returndatasize and first word.
+    function _rip7212Ret(bytes32 h, uint256 r, uint256 s, uint256 qx, uint256 qy) private view returns (uint256 retSize, uint256 word) {
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, h)
+            mstore(add(ptr, 0x20), r)
+            mstore(add(ptr, 0x40), s)
+            mstore(add(ptr, 0x60), qx)
+            mstore(add(ptr, 0x80), qy)
+            // Zero scratch.
+            mstore(0x00, 0)
+            pop(staticcall(gas(), 0x100, ptr, 0xa0, 0x00, 0x20))
+            retSize := returndatasize()
+            word := mload(0x00)
+        }
     }
 
     /// @dev RIP-7212 precompile call. Writes output to scratch space to distinguish
