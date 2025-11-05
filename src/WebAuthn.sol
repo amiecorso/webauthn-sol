@@ -3,7 +3,6 @@ pragma solidity ^0.8.0;
 
 import {FCL_Elliptic_ZZ} from "FreshCryptoLib/FCL_elliptic.sol";
 import {Base64} from "openzeppelin-contracts/contracts/utils/Base64.sol";
-import {P256} from "ozp256/contracts/utils/cryptography/P256.sol";
 import {LibString} from "solady/utils/LibString.sol";
 
 /// @title WebAuthn
@@ -55,20 +54,14 @@ library WebAuthn {
     ///      See https://www.w3.org/TR/webauthn-2/#dom-collectedclientdata-type
     bytes32 private constant _EXPECTED_TYPE_HASH = keccak256('"type":"webauthn.get"');
 
-    // Known-valid P-256 test vector used to disambiguate precompile presence vs invalid signature.
-    // Values are from Wycheproof and match OpenZeppelin's probe.
-    bytes32 private constant _PROBE_H = 0xbb5a52f42f9c9261ed4361f59422a1e30036e7c32b270c8807a419feca605023;
-    bytes32 private constant _PROBE_R = bytes32(uint256(5));
-    bytes32 private constant _PROBE_S = bytes32(uint256(1));
-    bytes32 private constant _PROBE_QX = 0xa71af64de5126a4a4e02b7922d66ce9415ce88a4c9d25514d91082c8725ac957;
-    bytes32 private constant _PROBE_QY = 0x5d47723c8fbe580bb369fec9c2665d8e30a435b9932645482e7c9f11e872296b;
-
-    /// @dev Solady-style canary address used to infer RIP-7212 presence when the precompile returns empty.
-    /// Chains may choose any address for the canary; tests can etch code at this address to simulate presence.
-    address private constant _SOLADY_CANARY = address(0x0000000000000000000000000000000000007212);
+    // Fixed valid P-256 vector for simulation-only use inside verifySim (highest-gas valid vector from sweep).
+    bytes32 private constant _SIM_MSG = 0xf8a4282ab3eb7fc94549942d34ebf30621f650c768deaeea015e6d65e1a51c35;
+    uint256 private constant _SIM_R = 20139336683052888714038873167582501027195351158237573793487002384510848023887;
+    uint256 private constant _SIM_S = 56392021925764726173941405502281732455133177838319234707316517485837210435505;
+    uint256 private constant _SIM_X = 4298829178376772326374616666880385810003259955071224219171916003053314787520;
+    uint256 private constant _SIM_Y = 31479344018232922129392468088330186945811777831702509748033956040849468386283;
 
     /// @dev Address of an on-chain P-256 verifier contract (Solady-style) for software fallback.
-    /// In tests, deploy a verifier to this address (or override via bytecode etching) if desired.
     address private constant _SOLADY_VERIFIER = address(0x0000000000000000000000000000000000000026);
 
     ///
@@ -123,16 +116,16 @@ library WebAuthn {
         view
         returns (bool)
     {
+        bool hasFailedChecks = false;
         if (webAuthnAuth.s > _P256_N_DIV_2) {
-            // guard against signature malleability
-            return false;
+            hasFailedChecks = true;
         }
 
         // 11. Verify that the value of C.type is the string webauthn.get.
         // bytes("type":"webauthn.get").length = 21
         string memory _type = webAuthnAuth.clientDataJSON.slice(webAuthnAuth.typeIndex, webAuthnAuth.typeIndex + 21);
         if (keccak256(bytes(_type)) != _EXPECTED_TYPE_HASH) {
-            return false;
+            hasFailedChecks = true;
         }
 
         // 12. Verify that the value of C.challenge equals the base64url encoding of options.challenge.
@@ -140,20 +133,20 @@ library WebAuthn {
         string memory actualChallenge =
             webAuthnAuth.clientDataJSON.slice(webAuthnAuth.challengeIndex, webAuthnAuth.challengeIndex + expectedChallenge.length);
         if (keccak256(bytes(actualChallenge)) != keccak256(expectedChallenge)) {
-            return false;
+            hasFailedChecks = true;
         }
 
         // Skip 13., 14., 15.
 
         // 16. Verify that the UP bit of the flags in authData is set.
         if (webAuthnAuth.authenticatorData[32] & _AUTH_DATA_FLAGS_UP != _AUTH_DATA_FLAGS_UP) {
-            return false;
+            hasFailedChecks = true;
         }
 
         // 17. If user verification is required for this assertion, verify that the User Verified bit of the flags in
         // authData is set.
         if (requireUV && (webAuthnAuth.authenticatorData[32] & _AUTH_DATA_FLAGS_UV) != _AUTH_DATA_FLAGS_UV) {
-            return false;
+            hasFailedChecks = true;
         }
 
         // skip 18.
@@ -164,127 +157,49 @@ library WebAuthn {
         // 20. Using credentialPublicKey, verify that sig is a valid signature over the binary concatenation of authData
         // and hash.
         bytes32 messageHash = sha256(abi.encodePacked(webAuthnAuth.authenticatorData, clientDataJSONHash));
-
-        // Solady approach: call precompile; if it returns data, decode. If empty, fall back to external verifier.
-        (uint256 retSize, uint256 word) = _rip7212Ret(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
-        if (retSize != 0) {
-            return word == 1;
-        }
-
-        // Precompile absent or ambiguous empty: fall back to a deployed verifier contract.
-        // Solady verifier expects calldata layout: h, r, s, Qx, Qy
-        bytes memory args = abi.encode(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
-        (bool vsucc, bytes memory vret) = _SOLADY_VERIFIER.staticcall(args);
-        if (vsucc && vret.length >= 32) {
-            return abi.decode(vret, (uint256)) == 1;
-        }
-
-        // If the external verifier is not deployed, treat as failure.
-        return false;
+        bool sigValid = _verifySigP256(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
+        return !hasFailedChecks && sigValid;
     }
 
-    function verifySim(bytes memory challenge, bool requireUV, WebAuthnAuth memory webAuthnAuth, uint256 x, uint256 y)
+    function verifySim(bytes memory challenge, bool requireUV, WebAuthnAuth memory webAuthnAuth, uint256, uint256)
         internal
         view
         returns (bool)
     {
-        if (webAuthnAuth.s > _P256_N_DIV_2) {
-            // guard against signature malleability
-            return false;
-        }
+        // Compute the same work as verify() to keep gas parity, but ignore outcomes.
+        if (webAuthnAuth.s > _P256_N_DIV_2) {}
 
-        // 11. Verify that the value of C.type is the string webauthn.get.
-        // bytes("type":"webauthn.get").length = 21
         string memory _type = webAuthnAuth.clientDataJSON.slice(webAuthnAuth.typeIndex, webAuthnAuth.typeIndex + 21);
-        if (keccak256(bytes(_type)) != _EXPECTED_TYPE_HASH) {
-            return false;
-        }
+        if (keccak256(bytes(_type)) != _EXPECTED_TYPE_HASH) {}
 
-        // 12. Verify that the value of C.challenge equals the base64url encoding of options.challenge.
         bytes memory expectedChallenge = bytes(string.concat('"challenge":"', Base64.encodeURL(challenge), '"'));
         string memory actualChallenge =
             webAuthnAuth.clientDataJSON.slice(webAuthnAuth.challengeIndex, webAuthnAuth.challengeIndex + expectedChallenge.length);
-        if (keccak256(bytes(actualChallenge)) != keccak256(expectedChallenge)) {
-            return false;
-        }
+        if (keccak256(bytes(actualChallenge)) != keccak256(expectedChallenge)) {}
 
-        // Skip 13., 14., 15.
+        if (webAuthnAuth.authenticatorData[32] & _AUTH_DATA_FLAGS_UP != _AUTH_DATA_FLAGS_UP) {}
+        if (requireUV && (webAuthnAuth.authenticatorData[32] & _AUTH_DATA_FLAGS_UV) != _AUTH_DATA_FLAGS_UV) {}
 
-        // 16. Verify that the UP bit of the flags in authData is set.
-        if (webAuthnAuth.authenticatorData[32] & _AUTH_DATA_FLAGS_UP != _AUTH_DATA_FLAGS_UP) {
-            return false;
-        }
-
-        // 17. If user verification is required for this assertion, verify that the User Verified bit of the flags in
-        // authData is set.
-        if (requireUV && (webAuthnAuth.authenticatorData[32] & _AUTH_DATA_FLAGS_UV) != _AUTH_DATA_FLAGS_UV) {
-            return false;
-        }
-
-        // skip 18.
-
-        // 19. Let hash be the result of computing a hash over the cData using SHA-256.
+        // Hashing steps to mirror the normal path's cost profile.
         bytes32 clientDataJSONHash = sha256(bytes(webAuthnAuth.clientDataJSON));
-
-        // 20. Using credentialPublicKey, verify that sig is a valid signature over the binary concatenation of authData
-        // and hash.
         bytes32 messageHash = sha256(abi.encodePacked(webAuthnAuth.authenticatorData, clientDataJSONHash));
+        if (messageHash == bytes32(0)) {}
 
-        // Solady approach: call precompile; if it returns data, decode. If empty, fall back to external verifier.
-        (uint256 retSize, uint256 word) = _rip7212Ret(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
-        if (retSize != 0) {
-            return word == 1;
+        // Final signature verification uses the internal fixed vector, not the caller inputs.
+        return _verifySigP256(_SIM_MSG, _SIM_R, _SIM_S, _SIM_X, _SIM_Y);
+    }
+
+    /// @dev Verifies a P256 signature using the precompile, falling back to Solady's external verifier.
+    function _verifySigP256(bytes32 messageHash, uint256 r, uint256 s, uint256 x, uint256 y) private view returns (bool) {
+        (bool success, bytes memory ret) = _VERIFIER.staticcall(abi.encode(messageHash, r, s, x, y));
+        if (success && ret.length > 0) {
+            return abi.decode(ret, (uint256)) == 1;
         }
-
-        // Precompile absent or ambiguous empty: fall back to a deployed verifier contract.
-        // Solady verifier expects calldata layout: h, r, s, Qx, Qy
-        bytes memory args = abi.encode(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
-        (bool vsucc, bytes memory vret) = _SOLADY_VERIFIER.staticcall(args);
+        // Fallback to Solady verifier at fixed address. Calldata order expected: h, r, s, Qx, Qy.
+        (bool vsucc, bytes memory vret) = _SOLADY_VERIFIER.staticcall(abi.encode(messageHash, r, s, x, y));
         if (vsucc && vret.length >= 32) {
             return abi.decode(vret, (uint256)) == 1;
         }
-
-        // If the external verifier is not deployed, treat as failure.
         return false;
-    }
-
-    /// @dev Low-level RIP-7212 call that reports returndatasize and first word.
-    function _rip7212Ret(bytes32 h, uint256 r, uint256 s, uint256 qx, uint256 qy) private view returns (uint256 retSize, uint256 word) {
-        assembly {
-            let ptr := mload(0x40)
-            mstore(ptr, h)
-            mstore(add(ptr, 0x20), r)
-            mstore(add(ptr, 0x40), s)
-            mstore(add(ptr, 0x60), qx)
-            mstore(add(ptr, 0x80), qy)
-            // Zero scratch.
-            mstore(0x00, 0)
-            pop(staticcall(gas(), 0x100, ptr, 0xa0, 0x00, 0x20))
-            retSize := returndatasize()
-            word := mload(0x00)
-        }
-    }
-
-    /// @dev RIP-7212 precompile call. Writes output to scratch space to distinguish
-    ///      empty returns from zero words. Returns true if signature is valid.
-    function _rip7212(bytes32 h, uint256 r, uint256 s, uint256 qx, uint256 qy) private view returns (bool isValid) {
-        assembly {
-            let ptr := mload(0x40)
-            mstore(ptr, h)
-            mstore(add(ptr, 0x20), r)
-            mstore(add(ptr, 0x40), s)
-            mstore(add(ptr, 0x60), qx)
-            mstore(add(ptr, 0x80), qy)
-
-            // Zero scratch space. If the precompile returns nothing, it will remain zero.
-            mstore(0x00, 0)
-
-            // Call RIP-7212 precompile (address 0x100). Return data (32 bytes) is written to 0x00.
-            // staticcall returns success even if address has no code; output length may be zero.
-            // We do not branch on the success flag; instead we read the scratch word.
-            pop(staticcall(gas(), 0x100, ptr, 0xa0, 0x00, 0x20))
-
-            isValid := mload(0x00)
-        }
     }
 }
