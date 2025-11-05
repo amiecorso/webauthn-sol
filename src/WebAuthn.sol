@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import {FCL_ecdsa} from "FreshCryptoLib/FCL_ecdsa.sol";
 import {FCL_Elliptic_ZZ} from "FreshCryptoLib/FCL_elliptic.sol";
 import {Base64} from "openzeppelin-contracts/contracts/utils/Base64.sol";
-import {P256} from "ozp256/contracts/utils/cryptography/P256.sol";
 import {LibString} from "solady/utils/LibString.sol";
 
 /// @title WebAuthn
@@ -167,8 +167,8 @@ library WebAuthn {
             return false;
         }
 
-        // Precompile absent; fall back to OpenZeppelin's on-chain verifier.
-        return P256.verifySolidity(messageHash, bytes32(webAuthnAuth.r), bytes32(webAuthnAuth.s), bytes32(x), bytes32(y));
+        // Precompile absent; fall back to FreshCryptoLib's software verifier.
+        return FCL_ecdsa.ecdsa_verify(messageHash, webAuthnAuth.r, webAuthnAuth.s, x, y);
     }
 
     /// @dev RIP-7212 precompile call. Writes output to scratch space to distinguish
