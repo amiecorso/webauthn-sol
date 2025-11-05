@@ -1,0 +1,39 @@
+
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>FCL verify gas distribution</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>body{font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; margin:20px}</style>
+</head>
+<body>
+  <h3>FCL verify gas distribution</h3>
+  <p><button id="save">Download PNG</button></p>
+  <canvas id="chart" width="1000" height="500"></canvas>
+  <script>
+    const labels = ["178310-178622", "178622-178935", "178935-179247", "179247-179560", "179560-179873", "179873-180185", "180185-180498", "180498-180811", "180811-181123", "181123-181436", "181436-181748", "181748-182061", "182061-182374", "182374-182686", "182686-182999", "182999-183312", "183312-183624", "183624-183937", "183937-184250", "184250-184562", "184562-184875", "184875-185187", "185187-185500", "185500-185813", "185813-186125", "186125-186438", "186438-186751", "186751-187063", "187063-187376", "187376-187689"];
+    const data = [5, 1, 3, 4, 5, 11, 8, 13, 10, 14, 16, 13, 17, 17, 20, 21, 17, 12, 23, 8, 14, 2, 8, 6, 2, 7, 6, 0, 0, 1];
+    const ctx = document.getElementById('chart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'bar',
+      data: { labels, datasets: [{ label: 'Count', data, backgroundColor: 'rgba(54, 162, 235, 0.5)' }] },
+      options: {
+        responsive: false,
+        scales: {
+          x: { title: { display: true, text: 'Gas range' }, ticks: { maxRotation: 45, minRotation: 45, autoSkip: true, maxTicksLimit: 20 } },
+          y: { title: { display: true, text: 'Count' }, beginAtZero: true }
+        }
+      }
+    });
+    document.getElementById('save').addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.href = chart.toBase64Image('image/png', 1.0);
+      a.download = 'fcl_gas_hist.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+  </script>
+</body>
+</html>
