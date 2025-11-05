@@ -1,0 +1,20 @@
+{
+  "lib/FreshCryptoLib": {
+    "rev": "76f3f135b7b27d2aa519f265b56bfc49a2573ab5"
+  },
+  "lib/forge-std": {
+    "rev": "ae570fec082bfe1c1f45b0acca4a2b4f84d345ce"
+  },
+  "lib/openzeppelin-contracts": {
+    "rev": "5705e8208bc92cd82c7bcdfeac8dbc7377767d96"
+  },
+  "lib/ozp256": {
+    "tag": {
+      "name": "v5.5.0",
+      "rev": "fcbae5394ae8ad52d8e580a3477db99814b9d565"
+    }
+  },
+  "lib/solady": {
+    "rev": "e7024bee47b1623f436ee491ca9458a6dc8abce9"
+  }
+}
